@@ -22,6 +22,7 @@ import (
 	orasMemoryStore "oras.land/oras-go/v2/content/memory"
 
 	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/collections"
 )
 
 func TestPackageOCIBlobArchive(t *testing.T) {
@@ -38,7 +39,7 @@ func TestPackageOCIBlobArchive(t *testing.T) {
 	// buffer here because we need to calculate a checksum for it in order
 	// to "push" it into the store.
 	blobBytes := makePlaceholderProviderPackageZip(t, "not a real executable; just a placeholder")
-	desc := pushOCIBlob(t, "archive/zip", "application/vnd.opentofu.providerpkg", blobBytes, store)
+	desc := pushOCIBlob(t, "archive/zip", "", blobBytes, store)
 
 	t.Run("happy path", func(t *testing.T) {
 		// The in-memory OCI repository contains just the blob represented
@@ -57,7 +58,11 @@ func TestPackageOCIBlobArchive(t *testing.T) {
 			TargetPlatform: CurrentPlatform,
 			Location:       loc,
 			Authentication: &mockAuthentication{
-				result: signed,
+				hashes: HashDispositions{
+					Hash("test:placeholder"): {
+						SignedByGPGKeyIDs: collections.NewSet("abc123"),
+					},
+				},
 			},
 		}
 		targetDir := t.TempDir()
@@ -123,36 +128,6 @@ func TestPackageOCIBlobArchive(t *testing.T) {
 		targetDir := t.TempDir()
 		_, err := loc.InstallProviderPackage(t.Context(), meta, targetDir, nil)
 		const wantErrSubstr = `selected OCI artifact manifest has unexpected media type "application/x-lzh-compressed"`
-		if err == nil {
-			t.Fatalf("unexpected success\nwant error containing: %s", wantErrSubstr)
-		}
-		if gotErr := err.Error(); !strings.Contains(gotErr, wantErrSubstr) {
-			t.Fatalf("wrong error\ngot: %s\nwant substring: %s", gotErr, wantErrSubstr)
-		}
-		// The unsupported format should've been detected before actually
-		// extracting the package. (The blob we provided was actually a
-		// zip archive despite the incorrect media type, so it could
-		// potentially still be extracted despite the media type problem.
-		if diff := diffDirEmpty(t, targetDir); diff != "" {
-			t.Error("unexpected content in target directory\n" + diff)
-		}
-	})
-	t.Run("unsupported artifact type", func(t *testing.T) {
-		wrongDesc := desc                                             // shallow copy
-		wrongDesc.ArtifactType = "application/vnd.opentofu.modulepkg" // a module package instead of a provider package
-		loc := PackageOCIBlobArchive{
-			repoStore:      store,
-			blobDescriptor: wrongDesc,
-		}
-		meta := PackageMeta{
-			Provider:       addrs.NewBuiltInProvider("foo"),
-			Version:        versions.MustParseVersion("1.0.0"),
-			TargetPlatform: CurrentPlatform,
-			Location:       loc,
-		}
-		targetDir := t.TempDir()
-		_, err := loc.InstallProviderPackage(t.Context(), meta, targetDir, nil)
-		const wantErrSubstr = `selected OCI artifact is a module package rather than a provider package`
 		if err == nil {
 			t.Fatalf("unexpected success\nwant error containing: %s", wantErrSubstr)
 		}
